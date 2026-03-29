@@ -3,40 +3,37 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model Channel {
   id        String   @id @default(cuid())
   userId    String
-  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   name      String
   url       String
   handle    String?
   youtubeId String?
   createdAt DateTime @default(now())
 
-  ideas     Idea[]
-  jobs      Job[]
+  ideas Idea[]
+  jobs  Job[]
 }
-
 
 model Idea {
-  id        String   @id @default(cuid())
-  channelId String
-  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
-
-  topic     String
-  hook      String
-  title     String
-  thumbnail String
-  thumbnailUrl String?
-  source    String   @default("local") // "gemini" | "local"
-
-  createdAt DateTime @default(now())
+  id           String   @id @default(cuid())
+  channelId     String
+  channel       Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  topic         String
+  hook          String
+  title         String
+  thumbnail     String
+  thumbnailUrl  String?
+  source        String   @default("local")
+  createdAt     DateTime @default(now())
 }
-
 
 model Job {
   id        String   @id @default(cuid())
@@ -44,42 +41,40 @@ model Job {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   channelId String?
   channel   Channel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
-  type      String   // e.g., "generate_idea"
-  status    String   @default("queued") // queued | running | done | failed
-  payload   String   // JSON string
-  result    String?  // JSON string
+  type      String
+  status    String   @default("queued")
+  payload   String
+  result    String?
   error     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
 }
 
 model User {
-  id           String    @id @default(cuid())
-  name         String?
-  email        String   @unique
-  image        String?          // ✅ ADD THIS
-  emailVerified DateTime?       // ✅ ADD THIS
-  username     String?   @unique
-  firstName    String?
-  lastName     String?
-  passwordHash String?
+  id                 String    @id @default(cuid())
+  name               String?
+  email              String    @unique
+  image              String?
+  emailVerified      DateTime?
+  username           String?   @unique
+  firstName          String?
+  lastName           String?
+  passwordHash       String?
+  pendingEmail       String?
+  emailChangeToken   String?
+  emailChangeExpires DateTime?
+  createdAt          DateTime  @default(now())
 
-  
-  pendingEmail        String?
-  emailChangeToken    String?
-  emailChangeExpires  DateTime?
-
-  accounts     Account[]
-  sessions     Session[]
-
-  channels     Channel[]
-  jobs      Job[]
-
-  createdAt    DateTime  @default(now())
+  accounts Account[]
+  sessions Session[]
+  channels Channel[]
+  jobs     Job[]
 }
 
 model Account {
-  id                String  @id @default(cuid())
+  id                String @id @default(cuid())
   userId            String
   type              String
   provider          String

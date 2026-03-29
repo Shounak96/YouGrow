@@ -1,13 +1,8 @@
 import { prisma } from "@/lib/db";
 import { generateIdeaWithGemini } from "@/lib/gemini";
-import fs from "node:fs/promises";
-import path from "node:path";
 import { makeThumbnailSvg } from "@/lib/thumbnail";
 
-
-
-
-function pick<T>(arr: T[]) {
+function pick<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
@@ -28,7 +23,13 @@ function generateIdea(topic: string) {
     `${topic} Made Simple: Step-by-Step`,
   ];
 
-  const thumbs = ["BIG MISTAKE ❌", "DO THIS ✅", "I TRIED IT", "SHOCKING RESULT", "GROW FAST"];
+  const thumbs = [
+    "BIG MISTAKE ❌",
+    "DO THIS ✅",
+    "I TRIED IT",
+    "SHOCKING RESULT",
+    "GROW FAST",
+  ];
 
   return {
     hook: pick(hooks),
@@ -37,9 +38,12 @@ function generateIdea(topic: string) {
   };
 }
 
+function svgToDataUrl(svg: string) {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
 /**
- * Processes exactly ONE queued job.
- * Returns a small summary string for UI.
+ * Processes exactly one queued job.
  */
 export async function processNextJob(): Promise<string> {
   const job = await prisma.job.findFirst({
@@ -49,7 +53,6 @@ export async function processNextJob(): Promise<string> {
 
   if (!job) return "No queued jobs.";
 
-  // Mark running
   await prisma.job.update({
     where: { id: job.id },
     data: { status: "running", error: null },
@@ -57,87 +60,112 @@ export async function processNextJob(): Promise<string> {
 
   try {
     if (job.type === "generate_idea") {
-  const payload = JSON.parse(job.payload) as { channelId: string; topic: string };
+      const payload = JSON.parse(job.payload) as {
+        channelId: string;
+        topic: string;
+      };
 
-  // 1) Try Gemini first, then fallback
-  const geminiIdea = await generateIdeaWithGemini(payload.topic);
-  const aiIdea = geminiIdea ?? generateIdea(payload.topic);
-  const source = geminiIdea ? "gemini" : "local";
+      const geminiIdea = await generateIdeaWithGemini(payload.topic);
+      const aiIdea = geminiIdea ?? generateIdea(payload.topic);
+      const source = geminiIdea ? "gemini" : "local";
 
+      const created = await prisma.idea.create({
+        data: {
+          channelId: payload.channelId,
+          topic: payload.topic,
+          hook: aiIdea.hook,
+          title: aiIdea.title,
+          thumbnail: aiIdea.thumbnail,
+          source,
+        },
+      });
 
-  // 2) Create DB record (THIS has the id)
-  const created = await prisma.idea.create({
-    data: {
-      channelId: payload.channelId,
-      topic: payload.topic,
-      hook: aiIdea.hook,
-      title: aiIdea.title,
-      thumbnail: aiIdea.thumbnail,
-      source,
-    },
-  });
+      await prisma.job.update({
+        where: { id: job.id },
+        data: {
+          status: "done",
+          result: JSON.stringify({ ideaId: created.id }),
+        },
+      });
 
-  // 3) Mark job done with result
-  await prisma.job.update({
-    where: { id: job.id },
-    data: {
-      status: "done",
-      result: JSON.stringify({ ideaId: created.id }),
-    },
-  });
+      return `Processed idea job: ${created.id}`;
+    }
 
-  return `Processed job ✅ Created idea: ${created.id}`;
-}
+    if (job.type === "generate_thumbnail") {
+      const payload = JSON.parse(job.payload) as { ideaId: string };
 
-if (job.type === "generate_thumbnail") {
-  const payload = JSON.parse(job.payload) as { ideaId: string };
+      const idea = await prisma.idea.findUnique({
+        where: { id: payload.ideaId },
+      });
 
-  const idea = await prisma.idea.findUnique({ where: { id: payload.ideaId } });
-  if (!idea) throw new Error("Idea not found");
+      if (!idea) {
+        throw new Error("Idea not found");
+      }
 
-  // Make PNG from idea.thumbnail text
-  const svg = makeThumbnailSvg({
-  headline: idea.thumbnail,
-  sub: idea.title.length > 34 ? idea.title.slice(0, 34) + "…" : idea.title,
-});
+      const svg = makeThumbnailSvg({
+        headline: idea.thumbnail,
+        sub:
+          idea.title.length > 34
+            ? `${idea.title.slice(0, 34)}…`
+            : idea.title,
+      });
 
-const relUrl = `/generated/thumbnails/${idea.id}.svg`;
-const outDir = path.join(process.cwd(), "public", "generated", "thumbnails");
-await fs.mkdir(outDir, { recursive: true });
+      const dataUrl = svgToDataUrl(svg);
 
-const outPath = path.join(outDir, `${idea.id}.svg`);
-await fs.writeFile(outPath, svg, "utf8");
+      await prisma.idea.update({
+        where: { id: idea.id },
+        data: { thumbnailUrl: dataUrl },
+      });
 
-await prisma.idea.update({
-  where: { id: idea.id },
-  data: { thumbnailUrl: relUrl },
-});
+      await prisma.job.update({
+        where: { id: job.id },
+        data: {
+          status: "done",
+          result: JSON.stringify({
+            ideaId: idea.id,
+            thumbnailUrl: dataUrl,
+          }),
+        },
+      });
 
-  await prisma.job.update({
-    where: { id: job.id },
-    data: { status: "done", result: JSON.stringify({ ideaId: idea.id, thumbnailUrl: relUrl }) },
-  });
+      return `Processed thumbnail job: ${idea.id}`;
+    }
 
-  return `Processed job ✅ Generated thumbnail for idea: ${idea.id}`;
-}
-
-
-
-    // Unknown job type
     await prisma.job.update({
       where: { id: job.id },
-      data: { status: "failed", error: `Unknown job type: ${job.type}` },
+      data: {
+        status: "failed",
+        error: `Unknown job type: ${job.type}`,
+      },
     });
 
-    return `Job failed ❌ Unknown type: ${job.type}`;
-  } catch (e: any) {
+    return `Unknown job type: ${job.type}`;
+  } catch (error: any) {
+    const message = String(error?.message ?? error);
+
     await prisma.job.update({
       where: { id: job.id },
-      data: { status: "failed", error: String(e?.message ?? e) },
+      data: {
+        status: "failed",
+        error: message,
+      },
     });
 
-    return `Job failed ❌ ${String(e?.message ?? e)}`;
+    return `Job failed: ${message}`;
+  }
+}
+
+export async function processQueuedJobs(limit = 5) {
+  const results: string[] = [];
+
+  for (let i = 0; i < limit; i++) {
+    const result = await processNextJob();
+    results.push(result);
+
+    if (result === "No queued jobs.") {
+      break;
+    }
   }
 
-  
+  return results;
 }

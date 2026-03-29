@@ -1,15 +1,15 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
 
-export async function middleware(req: Request) {
-  const url = new URL(req.url);
-  const pathname = url.pathname;
+export async function middleware(req: NextRequest) {
+  const { pathname, origin, search } = req.nextUrl;
 
-  // Protect these routes
   const protectedRoute =
     pathname.startsWith("/dashboard") || pathname.startsWith("/profile");
 
-  if (!protectedRoute) return NextResponse.next();
+  if (!protectedRoute) {
+    return NextResponse.next();
+  }
 
   const token = await getToken({
     req,
@@ -17,8 +17,8 @@ export async function middleware(req: Request) {
   });
 
   if (!token) {
-    const loginUrl = new URL("/login", url.origin);
-    loginUrl.searchParams.set("next", pathname);
+    const loginUrl = new URL("/login", origin);
+    loginUrl.searchParams.set("next", `${pathname}${search}`);
     return NextResponse.redirect(loginUrl);
   }
 

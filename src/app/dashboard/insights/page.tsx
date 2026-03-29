@@ -170,7 +170,7 @@ export default async function InsightsPage(props: {
                     30 days
                 </a>
                 </div>
-            <Badge variant="secondary">Phase 1 • Local DB</Badge>
+  
           </div>
           <p className="mt-1 text-sm text-gray-600">
             Your analytics from saved channels, ideas, and background jobs.
